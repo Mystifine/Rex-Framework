@@ -1,243 +1,185 @@
 --[[
 
-Created By: Mystifine and EDmaster24
+Rex is a framework created by Mystifine.
+
+	[MODULE]: Modules are created on either server or client, they will always return a value to the client if
+	a function is called from the client.
+	
+	[DATABASES]: Databases are created on either server or client. Databases are simply tables that automatically
+	replicate to the CLIENT. Functions and methods will not replicates. You are free to create methods and functions
+	on the Client.
 
 ]]
 
---|| Services ||--
-local RunService = game:GetService("RunService")
-local Players = game.Players
+local Rex = {};
 
---|| Variables ||--
-local Server = RunService:IsServer()
-local Client = RunService:IsClient()
+--|| RBX Services
+local RunService = game:GetService("RunService");
+local ReplicatedStorage = game.ReplicatedStorage;
 
-local ReplicatorFunction = script.RemoteFunctions.ReplicatorFunction
-local ReplicatorEvent = script.RemoteEvents.ReplicatorEvent
+--|| Variables
+local Assets = script.Assets;
+local Remotes = script.Remotes;
+local Library = script.Library;
+local Connections = script.Connections;
+local PreinstalledAssets = script.PreinstalledAssets;
+local ServerLoaded = Assets.ServerLoaded;
+local ClientLoaded = Assets.ClientLoaded;
+local Get = Remotes.Get;
+local Send = Remotes.Send;
 
---|| Modules ||--
-local Rex = {}
-local CachedLibraries = {}
-local Configurations = require(script.Data.Configurations)
+--[[
+	These empty functions are so that the code editor for Roblox picks up these functions. 
+	They will be overwritten automatically.
+]]
 
---| Functions For Autofill from other scripts .-. they will get over written by unpack
--- SERVICES
-function Rex:CreateService() end
-function Rex:GetService() end
-function Rex:AddFunctionToService() end
-function Rex:GetServicesClientCallbacks() end
-function Rex:GetAllServices() end
-
--- CLASSES
-function Rex:CreateClass() end
-function Rex:GetClass() end
-function Rex:GetClassesClientCallbacks() end
-function Rex:GetAllClasses() end
-
--- DATABAASES
-function Rex:CreateDatabase() end
-function Rex:GetDatabase() end
-function Rex:GetAllDatabases() end
-function Rex:DisconnectDatabaseTablePropertyChanged() end
-function Rex:GetDatabaseTablePropertyChanged() end
-function Rex:DetectChange() end
-function Rex:ReplicateDatabase() end
-
---|| Private Functions
-local function UnpackLibrary(Library)
-	CachedLibraries[Library.Name] = require(Library)	
-	for Index, Function in next, CachedLibraries[Library.Name] do
-		if typeof(Function) == "function" then
-			Rex[Index] = Function
-		end
-	end
-end
-
+--|| Local Functions
 local function UnpackGlobals()
-	for _, Module in ipairs(script.Globals:GetChildren()) do
-		Rex[Module.Name] = require(Module)
+	local Children = PreinstalledAssets.Functions:GetChildren();
+	for i = 1, #Children do
+		local Child = Children[i];
+		Rex[Child.Name] = require(Child);
 	end
 end
 
-local function WaitUntilLoaded()
-	local Loaded = Server and script.Data.ServerLoaded or script.Data.ClientLoaded
-	-- This will wait until Loaded is true
-	while not Loaded.Value do
-		RunService.Stepped:Wait()
+local function Unpack(Module)
+	local Module = require(Module);
+	for Index, Function in next, Module do
+		Rex[Index] = Function;
 	end
 end
 
-UnpackGlobals()
---| Unpack them libraries!
-for _, Library in ipairs(script.Libraries:GetChildren()) do
-	UnpackLibrary(Library)
-	Rex.Print(Library.Name.." has been successfully loaded!")	
+--|| Modules
+function Rex:GetModule() end;
+function Rex:GetAllModules() end;
+function Rex:CreateModule() end;
+
+--|| Databases
+function Rex:GetDatabase() end;
+function Rex:CreateDatabase() end;
+function Rex:GetAllDatabases() end;
+function Rex:Write() end;
+
+function Rex:Start() 
+	local Loaded = RunService:IsServer() and ServerLoaded or ClientLoaded
+	Loaded.Value = true;
+end;
+
+UnpackGlobals();
+Unpack(Library.Modules);
+Unpack(Library.Databases);
+
+local function RecursiveUpdate(Tbl1, Tbl2)
+	-- Tbl1 is the one we want to update into;
+	for Index, Value in next, Tbl2 do
+		if Tbl1[Index] == nil then -- If the index doesn't exist we just make it
+			Tbl1[Index] = Value;
+		elseif type(Tbl1[Index]) == "table" and type(Value) == "table" then -- If it already exist and both values are tables we want to recursive update it
+			RecursiveUpdate(Tbl1[Index], Value);
+		else
+			Tbl1[Index] = Value
+		end
+	end
+	
+	for Index, Value in next, Tbl1 do
+		if Tbl2[Index] == nil then
+			Tbl1[Index] = nil; -- Remove it
+		end
+	end
 end
 
---| Other Functions 
-function Rex:CreateShortcut(ShortcutId, Function)
-	Rex[ShortcutId] = Function
+local function GetDataFrom(Table, Index, Timeout)
+	if Table[Index] == nil then
+		local Stamp = os.clock();
+		while os.clock() - Stamp < Timeout do
+			RunService.Stepped:Wait();
+			if Table[Index] ~= nil then
+				break
+			end
+		end
+	end
+	return Table[Index];
 end
 
-function Rex:Start()
-	if Server then
-		--Rex:ReplicateDatabase()
-		script.Data.ServerLoaded.Value = true
-		Rex.Print("Rex has been started :3 on the server UWU")
-	elseif Client then
-		script.Data.ClientLoaded.Value = true
-		Rex.Print("Rex has been started UWU on the client :3")
-	end
-end
-
--- RexUpdater Hooker
-if Server then
-	ReplicatorFunction.OnServerInvoke = function(Player)
-		WaitUntilLoaded() -- We need to wait until everything is created 
-		
-		-- We need to compact the functions and services 
-		local CompactedData = {
-			Services = {},
-			Classes = {},
-			Databases = {},
-		}
-		
-		local function CompactFunctions(Id, Data)
-			local Functions = {}
-			for FunctionName, _ in next, Data do
-				local Remote = script.RemoteFunctions:FindFirstChild(Id.."."..FunctionName)
-				Functions[FunctionName] = Remote
+--|| Main
+if RunService:IsClient() then
+	local ClientFunctions = {}
+	
+	ClientFunctions.NewModule = function(ModuleId, CompactedData)
+		local LocalFunctions = {};
+		for FunctionIndex, RemoteFunction in next, CompactedData do
+			LocalFunctions[FunctionIndex] = function(...)
+				return RemoteFunction:InvokeServer(...)
 			end
-			return Functions
 		end
+		Rex:CreateModule(ModuleId, LocalFunctions)
+	end;
+	
+	ClientFunctions.NewDatabase = function(Database, Data)
+		Rex:CreateDatabase(Database, Data);
+	end;
+	
+	ClientFunctions.UpdateDatabase = function(DB, List, Value)
+		local ParentDirectory, Directory, LastIndex = nil, Rex:GetDatabase(DB), nil
 		
-		--| Compact Services
-		local Services = Rex:GetServicesClientCallbacks()
-		for ServiceId, Functions in next, Services do
-			if not script.Services:FindFirstChild(ServiceId) then
-				CompactedData.Services[ServiceId] = CompactFunctions(ServiceId, Functions)
-			end
+		for i = 1, #List do
+			ParentDirectory = Directory;
+			Directory = Directory[List[i]] --GetDataFrom(Directory, List[i], 5);
+			LastIndex = List[i];
+		end
+		local PreviousValue = Directory;
+		
+		--| Simulate Table.Remove
+		if Value == nil and type(LastIndex) == "number" then
+			table.remove(ParentDirectory, LastIndex);
+		elseif type(Value) == "table" and type(Directory) == "table" then
+			--| Add Into Table;
+			RecursiveUpdate(Directory, Value);
+		else
+			ParentDirectory[LastIndex] = Value;
 		end
 		
-		--| Compact Databases
-		local Databases = Rex:GetAllDatabases()
-		for Database, Data in next, Databases do
-			if not script.Databases:FindFirstChild(Database) and Data[2] then
-				CompactedData.Databases[Database] = Data
+		local Connections = RunService:IsServer() and Connections.ServerConnections or Connections.ClientConnections;
+		local ListToStringIdentifier = tostring(List[1]);
+		for i = 2, #List do
+			local Value = List[i];
+			ListToStringIdentifier = ListToStringIdentifier.."."..tostring(Value);
+		end
+		local Signal = Connections:FindFirstChild(ListToStringIdentifier)
+		if Signal 
+		and (type(PreviousValue) ~= "table"
+		and type(Value) ~= "table" and PreviousValue ~= Value or type(PreviousValue) == "table" or type(Value) == "table") then
+			Signal:Fire(PreviousValue, Value);
+		end
+	end;
+	
+	--| If Rex is required on the client;
+	Send.OnClientEvent:Connect(function(Task, ...)
+		if ClientFunctions[Task] then
+			ClientFunctions[Task](...);
+		end
+	end);
+	
+	local ExistingModules, ExistingDatabases = Get:InvokeServer();
+	for Service, Functions in next, ExistingModules do
+		local LocalFunctions = {};
+		for FunctionIndex, RemoteFunction in next, Functions do
+			LocalFunctions[FunctionIndex] = function(...)
+				return RemoteFunction:InvokeServer(...)
 			end
 		end
-		
-		--| Compact Classes
-		local Classes = Rex:GetClassesClientCallbacks()
-		for Class, Functions in next, Classes do
-			if not script.Classes:FindFirstChild(Class) then
-				CompactedData.Classes[Class] = CompactFunctions(Class, Functions)
-			end
-		end
-		return CompactedData
+		Rex:CreateModule(Service, LocalFunctions)
+	end;
+	
+	for Database, Data in next, ExistingDatabases do
+		Rex:CreateDatabase(Database, Data);
+	end;
+elseif RunService:IsServer() then
+	Get.OnServerInvoke = function(Player)
+		local _, ModulesClientCallbacks = Rex:GetAllModules();
+		local Databases = Rex:GetAllDatabases();
+		return ModulesClientCallbacks, Databases 
 	end
-	
-	coroutine.resume(coroutine.create(function()
-		while Configurations.AutoReplicateDatabase do
-			RunService.Stepped:Wait()
-			Rex:ReplicateDatabase()
-		end
-	end))
-	
-	coroutine.resume(coroutine.create(function()
-		wait(30)
-		if not script.Data.ServerLoaded.Value then
-			Rex.Warn("\nDid you forget to call Rex:Start() on the SERVER? It's been 30 seconds.\nDid you forget to call Rex:Start()? It's been 30 seconds\nDid you forget to call Rex:Start()? It's been 30 seconds.\nDid you forget to call Rex:Start()? It's been 30 seconds.\nDid you forget to call Rex:Start()? It's been 30 seconds.\nDid you forget to call Rex:Start()? It's been 30 seconds.")
-		end
-	end))
-elseif Client then
-	-- If we're on the client we're going to request for updates
-	local Data = ReplicatorFunction:InvokeServer()
-	
-	local function CompactFunctions(Data)
-		local Functions = {}
-		for FunctionIndex, Remote in next, Data do
-			Functions[FunctionIndex] = function(...)
-				return Remote:InvokeServer(...)
-			end
-		end
-		return Functions
-	end
-	
-	-- Accept data from the server 
-	local TaskHandler = {
-		--| Services
-		NewService = function(ServiceId, Data)
-			Rex:CreateService(ServiceId, CompactFunctions(Data))
-		end,
-		AddServiceFunction = function(ServiceId, FunctionIndex, Remote)
-			Rex:AddFunctionToService(ServiceId, FunctionIndex, function(...)
-				return Remote:InvokeServer(...)
-			end)
-		end,
-
-		--| Classes 
-		NewClass = function(ClassId, Data)
-			Rex:CreateClass(ClassId, CompactFunctions(Data))
-		end,
-		AddClassFunction = function(ClassId, FunctionIndex, Remote)
-			Rex:AddFunctionToClass(ClassId, FunctionIndex, function(...)
-				return Remote:InvokeServer(...)
-			end)
-		end,
-
-		--| Database 
-		NewDatabase = function(DatabaseId, Data)
-			Rex:CreateDatabase(DatabaseId, Data[1], false)
-		end,
-		UpdateDatabase = function(UpdatedData)
-			local Databases = Rex:GetAllDatabases()
-			Rex:DetectChange(Databases, UpdatedData)
-			
-			local function UpdateTo(New, Old)
-				for Index, Value in next, New do
-					if typeof(Value) == "table" then
-						if not Old[Index] then
-							Old[Index] = Value
-						else
-							UpdateTo(Value, Old[Index])
-						end
-					else
-						Old[Index] = Value
-					end
-				end
-			end
-			
-			for Index, Value in next, UpdatedData do
-				CachedLibraries.Databases[Index] = Value
-			end
-			UpdateTo(UpdatedData, Databases)
-		end,
-	}
-	
-	--| Unpack Services And Classes And Databases
-	for ServiceId, Functions in next, Data.Services do
-		TaskHandler.NewService(ServiceId, Functions)
-	end
-	
-	for ClassId, Functions in next, Data.Classes do
-		TaskHandler.NewClass(ClassId, Functions)
-	end
-	
-	for Database, Data in next, Data.Databases do
-		TaskHandler.NewDatabase(Database, Data)
-	end
-	
-	ReplicatorEvent.OnClientEvent:Connect(function(Task, ...)
-		TaskHandler[Task](...)
-	end)
-	
-	coroutine.resume(coroutine.create(function()
-		wait(30)
-		if not script.Data.ClientLoaded.Value then
-			Rex.Warn("\nDid you forget to call Rex:Start() on the CLIENT? It's been 30 seconds.\nDid you forget to call Rex:Start()? It's been 30 seconds\nDid you forget to call Rex:Start()? It's been 30 seconds.\nDid you forget to call Rex:Start()? It's been 30 seconds.\nDid you forget to call Rex:Start()? It's been 30 seconds.\nDid you forget to call Rex:Start()? It's been 30 seconds.")
-		end
-	end))
 end
 
 return Rex
